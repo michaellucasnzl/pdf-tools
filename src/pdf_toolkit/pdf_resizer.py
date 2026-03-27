@@ -512,6 +512,50 @@ def expand_files(file_args: list[str], directory: Path | None, recursive: bool) 
     return sorted(set(files))
 
 
+def decrypt_pdf(
+    input_path: Path,
+    output_path: Path,
+    password: str,
+    strip_metadata: bool,
+    quiet: bool,
+    debug: bool = False,
+) -> bool:
+    """
+    Open a password-protected PDF and save it without any encryption or password.
+
+    Returns True on success, False on failure.
+    """
+    try:
+        import pikepdf
+
+        pdf = pikepdf.open(str(input_path), password=password)
+        pdf.remove_unreferenced_resources()
+
+        if strip_metadata:
+            with pdf.open_metadata() as meta:
+                for key in list(meta.keys()):
+                    del meta[key]
+            if hasattr(pdf, "docinfo") and pdf.docinfo is not None:
+                for key in list(pdf.docinfo.keys()):
+                    del pdf.docinfo[key]
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf.save(str(output_path), linearize=True)
+        pdf.close()
+        return True
+
+    except pikepdf.PasswordError:
+        console.print(f"  [red]Error: incorrect password for {input_path.name}[/red]")
+        if debug:
+            console.print(traceback.format_exc())
+        return False
+    except Exception as e:
+        console.print(f"  [red]Error: {e}[/red]")
+        if debug:
+            console.print(traceback.format_exc())
+        return False
+
+
 def merge_pdfs(
     input_paths: list[Path],
     output_path: Path,
@@ -626,6 +670,14 @@ def main(
         False, "--dry-run",
         help="Analyse files and predict compression without writing output.",
     ),
+    decrypt: bool = typer.Option(
+        False, "--decrypt",
+        help="Remove password protection from encrypted PDFs. Requires --password.",
+    ),
+    password: Optional[str] = typer.Option(
+        None, "--password",
+        help="Password used to open an encrypted PDF (for --decrypt).",
+    ),
     workers: Optional[int] = typer.Option(
         None, "--workers", "-w",
         help="Parallel worker threads for batch jobs. Default: CPU core count.",
@@ -669,6 +721,7 @@ def main(
       pdf-toolkit scan.pdf --dry-run               Predict size without writing
       pdf-toolkit *.pdf -w 4                       Batch with 4 parallel workers
       pdf-toolkit -q low --save-defaults           Save low quality as your default
+      pdf-toolkit secret.pdf --decrypt --password mypass   Remove PDF password
     """
     if output_json:
         quiet = True
@@ -735,6 +788,21 @@ def main(
         _run_dry_run(pdf_files, output_json)
         return
 
+    # ── --decrypt ─────────────────────────────────────────────────────────────
+    if decrypt:
+        if not password:
+            console.print(
+                "[red]--decrypt requires --password. "
+                "Usage: pdf-toolkit file.pdf --decrypt --password <password>[/red]"
+            )
+            raise typer.Exit(1)
+        _run_decrypt(
+            pdf_files, output_dir, suffix if suffix != "_compressed" else "_decrypted",
+            overwrite, backup, strip_metadata, quiet, debug, output_json,
+            password,
+        )
+        return
+
     # ── --merge ───────────────────────────────────────────────────────────────
     if merge:
         _run_merge(
@@ -789,6 +857,73 @@ def main(
 # ---------------------------------------------------------------------------
 # Runner helpers
 # ---------------------------------------------------------------------------
+
+def _run_decrypt(
+    pdf_files: list[Path],
+    output_dir: Path | None,
+    suffix: str,
+    overwrite: bool,
+    backup: bool,
+    strip_metadata: bool,
+    quiet: bool,
+    debug: bool,
+    output_json: bool,
+    password: str,
+) -> None:
+    if not quiet:
+        console.print(
+            f"\n[bold]PDF Toolkit — decrypt[/bold]  "
+            f"files:[cyan]{len(pdf_files)}[/cyan]\n"
+        )
+
+    results: list[tuple[str, int, int, bool]] = []
+    any_failed = False
+
+    for pdf_file in pdf_files:
+        original_size = pdf_file.stat().st_size
+        if not quiet:
+            console.print(f"[bold]{pdf_file.name}[/bold] ({format_size(original_size)})")
+
+        out_path = resolve_output_path(pdf_file, output_dir, suffix, overwrite)
+
+        if overwrite and backup:
+            backup_path = pdf_file.with_suffix(pdf_file.suffix + ".bak")
+            shutil.copy2(pdf_file, backup_path)
+            if not quiet:
+                console.print(f"  [dim]Backup: {backup_path}[/dim]")
+
+        if overwrite:
+            temp_fd, temp_out = tempfile.mkstemp(suffix=".pdf", dir=str(pdf_file.parent))
+            os.close(temp_fd)
+            actual_out = Path(temp_out)
+        else:
+            actual_out = out_path
+
+        success = decrypt_pdf(
+            pdf_file, actual_out, password, strip_metadata, quiet, debug
+        )
+
+        if success:
+            if overwrite:
+                shutil.move(str(actual_out), str(pdf_file))
+            new_size = (pdf_file if overwrite else out_path).stat().st_size
+            results.append((pdf_file.name, original_size, new_size, True))
+            if not quiet:
+                saved = original_size - new_size
+                console.print(
+                    f"  [green]→ {out_path.name if not overwrite else pdf_file.name}  "
+                    f"{format_size(new_size)}"
+                    + (f"  (saved {format_size(saved)})" if saved > 0 else "")
+                    + "  [encryption removed][/green]"
+                )
+        else:
+            if overwrite and actual_out.exists():
+                actual_out.unlink()
+            results.append((pdf_file.name, original_size, original_size, False))
+            any_failed = True
+
+    _finish(results, any_failed, quiet, output_json)
+
 
 def _run_dry_run(pdf_files: list[Path], output_json: bool) -> None:
     analyses = []

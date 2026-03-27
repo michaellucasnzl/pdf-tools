@@ -59,6 +59,7 @@ No file dialog? Run from the command line instead (see below).
 | Merge several PDFs into one | `./run.sh a.pdf b.pdf c.pdf --merge` |
 | Preview savings without changing files | `./run.sh scan.pdf --dry-run` |
 | Replace the original (keeps a backup) | `./run.sh scan.pdf --overwrite --backup` |
+| Remove password from a protected PDF | `./run.sh locked.pdf --decrypt --password mypass` |
 
 On Windows replace `./run.sh` with `"Run PDF Toolkit.bat"` — or just drag files onto it.
 
@@ -94,6 +95,8 @@ Usage: pdf-toolkit [OPTIONS] [FILES]...
 --overwrite         Replace the original file
 -b, --backup        Save a .bak copy before overwriting
 --strip-metadata    Remove author, title, and other metadata
+--decrypt           Remove password protection from an encrypted PDF
+--password          Password to open the encrypted PDF (use with --decrypt)
 --json              Print results as JSON (useful for scripting)
 --debug             Show full error details
 --save-defaults     Save current options as your personal defaults
@@ -153,6 +156,7 @@ MIT — see [LICENSE](LICENSE).
 - **`--split-pages`** — one compressed PDF per page, with optional page range selection
 - **`--merge`** — combine multiple PDFs into one before compressing
 - **`--dry-run`** — analyse files and predict savings without writing anything
+- **`--decrypt`** — remove password protection from an encrypted PDF
 - **Parallel batch** — compress multiple files simultaneously with `--workers`
 - **`--json`** — machine-readable JSON summary for scripting
 - **`--debug`** — full tracebacks on errors for troubleshooting
@@ -275,6 +279,8 @@ Options:
   -m, --merge            Merge all inputs into one PDF before compressing
   --merge-output PATH    Output path for merged file
   --dry-run              Analyse and predict savings without writing output
+  --decrypt              Remove password protection from an encrypted PDF
+  --password TEXT        Password to open an encrypted PDF (use with --decrypt)
   -w, --workers INT      Parallel worker threads for batch jobs (default: CPU count)
   -o, --output-dir PATH  Output directory (default: same as input)
   -s, --suffix TEXT      Suffix for output filenames  [default: _compressed]
@@ -655,11 +661,39 @@ Options:
   -r, --recursive       With --dir, include subdirectories
   --strip-metadata      Remove document metadata (author, title, etc.)
   -b, --backup          Create a .bak backup before overwriting
+  --decrypt             Remove password protection from an encrypted PDF
+  --password TEXT       Password to open an encrypted PDF (use with --decrypt)
   -v, --verbose         Show detailed per-phase progress
   --quiet               Suppress all output except errors
   --version             Show version and exit
   --help                Show this message and exit
 ```
+
+---
+
+## Removing password protection (`--decrypt`)
+
+Open a password-protected PDF and save an identical, unencrypted copy:
+
+```bash
+pdf-toolkit locked.pdf --decrypt --password mypassword
+```
+
+Produces `locked_decrypted.pdf` next to the original. Use the standard output options to control where the file is saved:
+
+```bash
+# Custom output folder
+pdf-toolkit locked.pdf --decrypt --password mypassword -o ./unlocked
+
+# Overwrite the original (removes encryption in-place, with optional backup)
+pdf-toolkit locked.pdf --decrypt --password mypassword --overwrite
+pdf-toolkit locked.pdf --decrypt --password mypassword --overwrite --backup
+
+# Custom suffix
+pdf-toolkit locked.pdf --decrypt --password mypassword -s _unlocked
+```
+
+Decryption is a separate operation — compression options are not applied. If you also want to compress, run the tool twice (once to decrypt, once to compress), or simply run without `--decrypt` on the already-decrypted file.
 
 ---
 

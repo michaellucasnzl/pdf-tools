@@ -21,6 +21,9 @@ python -m venv .venv
 echo Installing dependencies...
 .venv\Scripts\pip install --quiet -r requirements.txt
 
+echo Installing pdf-toolkit...
+.venv\Scripts\pip install --quiet -e .
+
 echo.
 echo ============================================
 echo  Setup complete!
